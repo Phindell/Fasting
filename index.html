@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0A0F1C" />
+  <title>FastTrack — Water Fasting Companion</title>
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { font-family: 'DM Sans', sans-serif; background: linear-gradient(180deg, #0A0F1C 0%, #111827 100%); color: #fff; min-height: 100vh; overflow-x: hidden; }
+    #root { max-width: 480px; margin: 0 auto; padding: 20px 16px 90px; }
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script>
+    "use strict";
+    var h = React.createElement;
+    var useState = React.useState;
+    var useEffect = React.useEffect;
+    var useReducer = React.useReducer;
+
+    var GOAL_WEIGHT = 155;
+    var START_WEIGHT = 185;
+    var TOTAL_TO_LOSE = START_WEIGHT - GOAL_WEIGHT;
+    var WATER_GOAL = 128;
+    var STORAGE_KEY = "fasttrack_data";
+
+    var FASTING_PLANS = [
+      { id: "16:8", name: "16:8", fastHours: 16, eatHours: 8, desc: "Most popular \u2014 eat in an 8hr window" },
+      { id: "18:6", name: "18:6", fastHours: 18, eatHours: 6, desc: "More aggressive fat burning" },
+      { id: "20:4", name: "20:4 (Warrior)", fastHours: 20, eatHours: 4, desc: "One main meal + snacks" },
+      { id: "OMAD", name: "OMAD (23:1)", fastHours: 23, eatHours: 1, desc: "One meal a day" },
+      { id: "36hr", name: "36 Hour Fast", fastHours: 36, eatHours: 0, desc: "Extended water fast" }
+    ];
+
+    var btnGreen = { background: "linear-gradient(135deg, #4EEEB0, #36D6A0)", color: "#0A0F1C", border: "none", borderRadius: 12, padding: "14px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
+    var btnOutline = { background: "transparent", color: "#4EEEB0", border: "1.5px solid rgba(78,238,176,0.3)", borderRadius: 12, padding: "14px 24px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
+
+    var initialState = {
+      currentWeight: START_WEIGHT, weightLog: [], waterIntake: 0, waterDate: new Date().toDateString(),
+      selectedPlan: FASTING_PLANS[0], fastStartTime: null, fastActive: false, completedFasts: 0, streak: 0, view: "dashboard"
+    };
+
+    function loadState() {
+      try {
+        var saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          var parsed = JSON.parse(saved);
+          parsed.selectedPlan = FASTING_PLANS.find(function(p) { return p.id === parsed.selectedPlanId; }) || FASTING_PLANS[0];
+          delete parsed.selectedPlanId;
+          var today = new Date().toDateString();
+          if (parsed.waterDate !== today) { parsed.waterIntake = 0; parsed.waterDate = today; }
+          return Object.assign({}, initialState, parsed);
+        }
+      } catch (err) {}
+      return null;
+    }
+
+    function saveState(state) {
+      try {
+        var toSave = Object.assign({}, state, { selectedPlanId: state.selectedPlan.id });
+        delete toSave.selectedPlan; delete toSave.view;
+        toSave.waterDate = new Date().toDateString();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      } catch (err) {}
+    }
+
+    function reducer(state, action) {
+      switch (action.type) {
+        case "SET_VIEW": return Object.assign({}, state, { view: action.payload });
+        case "SET_PLAN": return Object.assign({}, state, { selectedPlan: action.payload });
+        case "START_FAST": return Object.assign({}, state, { fastStartTime: Date.now(), fastActive: true });
+        case "END_FAST": return Object.assign({}, state, { fastActive: false, fastStartTime: null, completedFasts: state.completedFasts + 1, streak: state.streak + 1 });
+        case "CANCEL_FAST": return Object.assign({}, state, { fastActive: false, fastStartTime: null });
+        case "ADD_WATER": return Object.assign({}, state, { waterIntake: Math.min(state.waterIntake + action.payload, 256) });
+        case "RESET_WATER": return Object.assign({}, state, { waterIntake: 0 });
+        case "LOG_WEIGHT": return Object.assign({}, state, { currentWeight: action.payload, weightLog: state.weightLog.concat([{ date: new Date().toLocaleDateString(), weight: action.payload }]) });
+        default: return state;
+      }
+    }
+
+    function formatTime(ms) {
+      var totalSec = Math.floor(ms / 1000);
+      var hr = Math.floor(totalSec / 3600);
+      var mn = Math.floor((totalSec % 3600) / 60);
+      var sc = totalSec % 60;
+      return hr.toString().padStart(2, "0") + ":" + mn.toString().padStart(2, "0") + ":" + sc.toString().padStart(2, "0");
+    }
+
+    function CircularProgress(props) {
+      var percent = props.percent, size = props.size || 200, stroke = props.stroke || 10;
+      var color = props.color || "#4EEEB0", bg = props.bg || "rgba(255,255,255,0.08)";
+      var r = (size - stroke) / 2;
+      var circ = 2 * Math.PI * r;
+      var offset = circ - (Math.min(percent, 100) / 100) * circ;
+      return h("div", { style: { position: "relative", width: size, height: size, display: "inline-flex", alignItems: "center", justifyContent: "center" } },
+        h("svg", { width: size, height: size, style: { position: "absolute", transform: "rotate(-90deg)" } },
+          h("circle", { cx: size / 2, cy: size / 2, r: r, fill: "none", stroke: bg, strokeWidth: stroke }),
+          h("circle", { cx: size / 2, cy: size / 2, r: r, fill: "none", stroke: color, strokeWidth: stroke, strokeDasharray: circ, strokeDashoffset: offset, strokeLinecap: "round", style: { transition: "stroke-dashoffset 0.6s ease" } })
+        ),
+        h("div", { style: { position: "relative", zIndex: 1, textAlign: "center" } }, props.children)
+      );
+    }
+
+    function NavBar(props) {
+      var tabs = [
+        { id: "dashboard", icon: "\u23F1", label: "Fast" },
+        { id: "water", icon: "\uD83D\uDCA7", label: "Water" },
+        { id: "weight", icon: "\u2696\uFE0F", label: "Weight" },
+        { id: "plans", icon: "\uD83D\uDCCB", label: "Plans" },
+        { id: "tips", icon: "\uD83D\uDCA1", label: "Tips" }
+      ];
+      return h("nav", { style: { display: "flex", justifyContent: "space-around", padding: "10px 0 14px", background: "rgba(15,20,30,0.95)", borderTop: "1px solid rgba(255,255,255,0.06)", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100, backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" } },
+        tabs.map(function(t) {
+          return h("button", { key: t.id, onClick: function() { props.dispatch({ type: "SET_VIEW", payload: t.id }); }, style: { background: "none", border: "none", color: props.view === t.id ? "#4EEEB0" : "rgba(255,255,255,0.35)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: "pointer", fontSize: 11, fontFamily: "'DM Sans', sans-serif", fontWeight: props.view === t.id ? 700 : 400, transition: "color 0.2s" } },
+            h("span", { style: { fontSize: 20 } }, t.icon), t.label
+          );
+        })
+      );
+    }
+
+    function DashboardView(props) {
+      var state = props.state, dispatch = props.dispatch;
+      var ref = useState(0), elapsed = ref[0], setElapsed = ref[1];
+
+      useEffect(function() {
+        if (!state.fastActive || !state.fastStartTime) return;
+        var iv = setInterval(function() { setElapsed(Date.now() - state.fastStartTime); }, 1000);
+        return function() { clearInterval(iv); };
+      }, [state.fastActive, state.fastStartTime]);
+
+      var totalMs = state.selectedPlan.fastHours * 3600 * 1000;
+      var percent = state.fastActive ? Math.min((elapsed / totalMs) * 100, 100) : 0;
+      var remaining = Math.max(totalMs - elapsed, 0);
+      var done = elapsed >= totalMs;
+      var lostSoFar = START_WEIGHT - state.currentWeight;
+      var progressPct = Math.min((lostSoFar / TOTAL_TO_LOSE) * 100, 100);
+
+      return h("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 28, paddingTop: 10 } },
+        h("div", { style: { display: "flex", gap: 12, width: "100%" } },
+          h("div", { style: { flex: 1, background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: "14px 12px", textAlign: "center" } },
+            h("div", { style: { fontSize: 10, color: "rgba(255,255,255,0.4)", letterSpacing: 1, textTransform: "uppercase" } }, "Streak"),
+            h("div", { style: { fontSize: 24, fontWeight: 700, color: "#4EEEB0" } }, state.streak, h("span", { style: { fontSize: 11, color: "rgba(255,255,255,0.4)" } }, " days"))
+          ),
+          h("div", { style: { flex: 1, background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: "14px 12px", textAlign: "center" } },
+            h("div", { style: { fontSize: 10, color: "rgba(255,255,255,0.4)", letterSpacing: 1, textTransform: "uppercase" } }, "Fasts Done"),
+            h("div", { style: { fontSize: 24, fontWeight: 700, color: "#fff" } }, state.completedFasts)
+          ),
+          h("div", { style: { flex: 1, background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: "14px 12px", textAlign: "center" } },
+            h("div", { style: { fontSize: 10, color: "rgba(255,255,255,0.4)", letterSpacing: 1, textTransform: "uppercase" } }, "Plan"),
+            h("div", { style: { fontSize: 18, fontWeight: 700, color: "#fff" } }, state.selectedPlan.name)
+          )
+        ),
+        h(CircularProgress, { percent: percent, size: 220, stroke: 12, color: done ? "#FFD166" : "#4EEEB0" },
+          state.fastActive
+            ? h("div", null,
+                h("div", { style: { fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 2 } }, done ? "COMPLETE!" : "REMAINING"),
+                h("div", { style: { fontSize: 32, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums" } }, done ? "\uD83C\uDF89" : formatTime(remaining)),
+                h("div", { style: { fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 } }, "Elapsed: " + formatTime(elapsed))
+              )
+            : h("div", null,
+                h("div", { style: { fontSize: 13, color: "rgba(255,255,255,0.4)" } }, "TAP TO START"),
+                h("div", { style: { fontSize: 22, fontWeight: 700, color: "#fff" } }, state.selectedPlan.fastHours + "h fast")
+              )
+        ),
+        h("div", { style: { display: "flex", gap: 12 } },
+          !state.fastActive
+            ? h("button", { onClick: function() { dispatch({ type: "START_FAST" }); }, style: btnGreen }, "\u25B6 Start Fast")
+            : h("div", { style: { display: "flex", gap: 12 } },
+                done ? h("button", { onClick: function() { dispatch({ type: "END_FAST" }); }, style: btnGreen }, "\u2713 Complete Fast") : null,
+                h("button", { onClick: function() { dispatch({ type: "CANCEL_FAST" }); }, style: btnOutline }, "\u2715 Cancel")
+              )
+        ),
+        h("div", { style: { width: "100%", background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: 20 } },
+          h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 10 } },
+            h("span", { style: { fontSize: 13, color: "rgba(255,255,255,0.5)" } }, "Weight Goal Progress"),
+            h("span", { style: { fontSize: 13, color: "#4EEEB0", fontWeight: 600 } }, lostSoFar.toFixed(1) + " / " + TOTAL_TO_LOSE + " lbs lost")
+          ),
+          h("div", { style: { height: 10, background: "rgba(255,255,255,0.08)", borderRadius: 5, overflow: "hidden" } },
+            h("div", { style: { height: "100%", width: progressPct + "%", background: "linear-gradient(90deg, #4EEEB0, #36D6A0)", borderRadius: 5, transition: "width 0.5s ease" } })
+          ),
+          h("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.3)" } },
+            h("span", null, START_WEIGHT + " lbs"),
+            h("span", null, "Current: " + state.currentWeight + " lbs"),
+            h("span", null, GOAL_WEIGHT + " lbs")
+          )
+        ),
+        state.fastActive ? h("div", { style: { width: "100%", background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: 20 } },
+          h("div", { style: { fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 12 } }, "Fasting Stages"),
+          [
+            { hr: 0, label: "Fed State", desc: "Body digesting food, insulin high", color: "#FFD166" },
+            { hr: 4, label: "Post-Absorptive", desc: "Blood sugar drops, fat burning begins", color: "#FF9F43" },
+            { hr: 12, label: "Ketosis Begins", desc: "Shifting to fat for fuel", color: "#4EEEB0" },
+            { hr: 16, label: "Fat Burning Zone", desc: "Growth hormone rises, autophagy starts", color: "#36D6A0" },
+            { hr: 24, label: "Deep Autophagy", desc: "Cellular cleanup accelerates", color: "#00B4D8" }
+          ].map(function(stage, i) {
+            var elapsedH = elapsed / 3600000;
+            var active = elapsedH >= stage.hr;
+            return h("div", { key: i, style: { display: "flex", alignItems: "center", gap: 12, padding: "8px 0", opacity: active ? 1 : 0.3, transition: "opacity 0.3s" } },
+              h("div", { style: { width: 10, height: 10, borderRadius: "50%", background: active ? stage.color : "rgba(255,255,255,0.15)", flexShrink: 0 } }),
+              h("div", null,
+                h("div", { style: { fontSize: 13, fontWeight: 600, color: "#fff" } }, stage.label + " ", h("span", { style: { color: "rgba(255,255,255,0.3)", fontWeight: 400 } }, "(" + stage.hr + "h+)")),
+                h("div", { style: { fontSize: 11, color: "rgba(255,255,255,0.4)" } }, stage.desc)
+              )
+            );
+          })
+        ) : null
+      );
+    }
+
+    function WaterView(props) {
+      var state = props.state, dispatch = props.dispatch;
+      var pct = (state.waterIntake / WATER_GOAL) * 100;
+      var glasses = Math.floor(state.waterIntake / 8);
+      return h("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 24, paddingTop: 10 } },
+        h("div", { style: { fontSize: 14, color: "rgba(255,255,255,0.5)", letterSpacing: 1 } }, "DAILY WATER INTAKE"),
+        h(CircularProgress, { percent: pct, size: 200, stroke: 12, color: "#00B4D8", bg: "rgba(0,180,216,0.12)" },
+          h("div", { style: { fontSize: 36, fontWeight: 800, color: "#fff" } }, state.waterIntake),
+          h("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.4)" } }, "/ " + WATER_GOAL + " oz")
+        ),
+        h("div", { style: { fontSize: 13, color: "rgba(255,255,255,0.4)" } }, glasses + " glasses of water today"),
+        h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" } },
+          [8, 12, 16, 32].map(function(amt) {
+            return h("button", { key: amt, onClick: function() { dispatch({ type: "ADD_WATER", payload: amt }); }, style: Object.assign({}, btnOutline, { borderColor: "rgba(0,180,216,0.4)", color: "#00B4D8", minWidth: 70 }) }, "+" + amt + " oz");
+          })
+        ),
+        h("button", { onClick: function() { dispatch({ type: "RESET_WATER" }); }, style: Object.assign({}, btnOutline, { borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", fontSize: 12 }) }, "Reset Today"),
+        h("div", { style: { width: "100%", background: "rgba(0,180,216,0.06)", borderRadius: 16, padding: 20, border: "1px solid rgba(0,180,216,0.1)" } },
+          h("div", { style: { fontSize: 14, fontWeight: 600, color: "#00B4D8", marginBottom: 10 } }, "\uD83D\uDCA7 Hydration Tips for Fasting"),
+          h("ul", { style: { margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6 } },
+            ["Drink water first thing when you wake up", "Add a pinch of salt for electrolytes during long fasts", "Sparkling water can help with hunger pangs", "Herbal tea counts toward your water goal", "Aim for clear to light yellow urine"].map(function(tip, i) {
+              return h("li", { key: i, style: { fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.5 } }, tip);
+            })
+          )
+        )
+      );
+    }
+
+    function WeightView(props) {
+      var state = props.state, dispatch = props.dispatch;
+      var ref = useState(""), input = ref[0], setInput = ref[1];
+      var lostSoFar = START_WEIGHT - state.currentWeight;
+      var remaining = state.currentWeight - GOAL_WEIGHT;
+      var progressPct = Math.min((lostSoFar / TOTAL_TO_LOSE) * 100, 100);
+
+      var handleLog = function() {
+        var w = parseFloat(input);
+        if (w > 0 && w < 500) { dispatch({ type: "LOG_WEIGHT", payload: w }); setInput(""); }
+      };
+
+      return h("div", { style: { display: "flex", flexDirection: "column", gap: 24, paddingTop: 10 } },
+        h("div", { style: { textAlign: "center" } },
+          h("div", { style: { fontSize: 14, color: "rgba(255,255,255,0.5)", letterSpacing: 1 } }, "CURRENT WEIGHT"),
+          h("div", { style: { fontSize: 56, fontWeight: 800, color: "#fff", lineHeight: 1.1 } }, state.currentWeight, h("span", { style: { fontSize: 20, color: "rgba(255,255,255,0.3)" } }, " lbs"))
+        ),
+        h("div", { style: { background: "linear-gradient(135deg, rgba(78,238,176,0.1), rgba(0,180,216,0.1))", borderRadius: 20, padding: 24, border: "1px solid rgba(78,238,176,0.15)" } },
+          h("div", { style: { display: "flex", justifyContent: "space-around", textAlign: "center", marginBottom: 16 } },
+            h("div", null, h("div", { style: { fontSize: 28, fontWeight: 800, color: "#4EEEB0" } }, lostSoFar.toFixed(1)), h("div", { style: { fontSize: 11, color: "rgba(255,255,255,0.4)" } }, "lbs lost")),
+            h("div", { style: { width: 1, background: "rgba(255,255,255,0.08)" } }),
+            h("div", null, h("div", { style: { fontSize: 28, fontWeight: 800, color: "#FF9F43" } }, remaining.toFixed(1)), h("div", { style: { fontSize: 11, color: "rgba(255,255,255,0.4)" } }, "lbs to go")),
+            h("div", { style: { width: 1, background: "rgba(255,255,255,0.08)" } }),
+            h("div", null, h("div", { style: { fontSize: 28, fontWeight: 800, color: "#fff" } }, GOAL_WEIGHT), h("div", { style: { fontSize: 11, color: "rgba(255,255,255,0.4)" } }, "goal weight"))
+          ),
+          h("div", { style: { height: 12, background: "rgba(255,255,255,0.08)", borderRadius: 6, overflow: "hidden" } },
+            h("div", { style: { height: "100%", width: progressPct + "%", background: "linear-gradient(90deg, #4EEEB0, #00B4D8)", borderRadius: 6, transition: "width 0.5s" } })
+          ),
+          h("div", { style: { textAlign: "center", marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.4)" } }, progressPct.toFixed(0) + "% to goal")
+        ),
+        h("div", { style: { display: "flex", gap: 10, alignItems: "center" } },
+          h("input", { type: "number", value: input, onChange: function(ev) { setInput(ev.target.value); }, placeholder: "Enter weight...", style: { flex: 1, padding: "14px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.05)", color: "#fff", fontSize: 16, fontFamily: "'DM Sans', sans-serif", outline: "none" }, onKeyDown: function(ev) { if (ev.key === "Enter") handleLog(); } }),
+          h("button", { onClick: handleLog, style: btnGreen }, "Log")
+        ),
+        state.weightLog.length > 0 ? h("div", { style: { background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: 20 } },
+          h("div", { style: { fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 12 } }, "Recent Entries"),
+          state.weightLog.slice(-7).reverse().map(function(entry, i) {
+            return h("div", { key: i, style: { display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: i < Math.min(state.weightLog.length, 7) - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" } },
+              h("span", { style: { fontSize: 13, color: "rgba(255,255,255,0.4)" } }, entry.date),
+              h("span", { style: { fontSize: 13, fontWeight: 600, color: "#fff" } }, entry.weight + " lbs")
+            );
+          })
+        ) : null,
+        h("div", { style: { background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: 20 } },
+          h("div", { style: { fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 12 } }, "\uD83C\uDFC6 Milestones"),
+          [5, 10, 15, 20, 25, 30].map(function(m) {
+            var reached = lostSoFar >= m;
+            return h("div", { key: m, style: { display: "flex", alignItems: "center", gap: 12, padding: "8px 0" } },
+              h("div", { style: { width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: reached ? "#4EEEB0" : "rgba(255,255,255,0.06)", color: reached ? "#0A0F1C" : "rgba(255,255,255,0.2)", fontSize: 14, fontWeight: 700, transition: "all 0.3s" } }, reached ? "\u2713" : m),
+              h("span", { style: { fontSize: 13, color: reached ? "#4EEEB0" : "rgba(255,255,255,0.3)", fontWeight: reached ? 600 : 400 } }, m + " lbs lost " + (reached ? "\u2014 Achieved!" : "(" + (START_WEIGHT - m) + " lbs)"))
+            );
+          })
+        )
+      );
+    }
+
+    function PlansView(props) {
+      var state = props.state, dispatch = props.dispatch;
+      return h("div", { style: { display: "flex", flexDirection: "column", gap: 16, paddingTop: 10 } },
+        h("div", { style: { fontSize: 14, color: "rgba(255,255,255,0.5)", letterSpacing: 1, textAlign: "center" } }, "CHOOSE YOUR FASTING PLAN"),
+        FASTING_PLANS.map(function(plan) {
+          var active = state.selectedPlan.id === plan.id;
+          return h("button", { key: plan.id, onClick: function() { dispatch({ type: "SET_PLAN", payload: plan }); }, style: { background: active ? "rgba(78,238,176,0.1)" : "rgba(255,255,255,0.04)", border: active ? "2px solid #4EEEB0" : "2px solid transparent", borderRadius: 16, padding: 20, textAlign: "left", cursor: "pointer", transition: "all 0.2s" } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+              h("div", { style: { fontSize: 20, fontWeight: 700, color: active ? "#4EEEB0" : "#fff" } }, plan.name),
+              active ? h("div", { style: { background: "#4EEEB0", color: "#0A0F1C", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20 } }, "ACTIVE") : null
+            ),
+            h("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 } }, plan.desc),
+            h("div", { style: { display: "flex", gap: 20, marginTop: 12 } },
+              h("div", null, h("span", { style: { fontSize: 22, fontWeight: 700, color: active ? "#4EEEB0" : "rgba(255,255,255,0.6)" } }, plan.fastHours), h("span", { style: { fontSize: 11, color: "rgba(255,255,255,0.3)" } }, " hrs fasting")),
+              h("div", null, h("span", { style: { fontSize: 22, fontWeight: 700, color: active ? "#4EEEB0" : "rgba(255,255,255,0.6)" } }, plan.eatHours), h("span", { style: { fontSize: 11, color: "rgba(255,255,255,0.3)" } }, " hrs eating"))
+            )
+          );
+        })
+      );
+    }
+
+    function TipsView() {
+      var sections = [
+        { title: "\uD83D\uDE80 Getting Started", tips: ["Start with 16:8 for the first 1-2 weeks before increasing fasting hours.", "Schedule your eating window around your social life and meals you enjoy most.", "Break your fast with protein and healthy fats, not sugar or refined carbs.", "Stay busy during fasting hours \u2014 boredom triggers false hunger signals."] },
+        { title: "\u26A1 Maximizing Fat Loss", tips: ["Focus on whole foods during eating windows \u2014 quality matters as much as timing.", "Light exercise (walking, yoga) during fasting accelerates fat burning.", "Don't overeat during your window \u2014 IF isn't a license to binge.", "Track calories loosely at first; aim for a 500-cal daily deficit for ~1 lb/week loss.", "At 185 lbs targeting 155 lbs, plan for 30 weeks at a healthy 1 lb/week pace."] },
+        { title: "\uD83E\uDDE0 Staying Strong", tips: ["Hunger comes in waves \u2014 wait 20 minutes and it usually passes.", "Black coffee, green tea, and sparkling water are your best friends while fasting.", "Sleep 7-9 hours \u2014 poor sleep increases hunger hormones dramatically.", "Weigh yourself weekly, same day, morning after bathroom \u2014 ignore daily fluctuations.", "Take progress photos monthly; the scale doesn't show the full picture."] },
+        { title: "\u26A0\uFE0F Safety First", tips: ["Stop fasting if you feel dizzy, nauseous, or extremely weak.", "Consult your doctor before extended fasts (36+ hours).", "Electrolytes (sodium, potassium, magnesium) are critical for fasts over 24 hours.", "If you have diabetes, heart conditions, or take medications, get medical clearance first.", "Pregnant or breastfeeding? Intermittent fasting is not recommended."] }
+      ];
+      return h("div", { style: { display: "flex", flexDirection: "column", gap: 20, paddingTop: 10 } },
+        h("div", { style: { fontSize: 14, color: "rgba(255,255,255,0.5)", letterSpacing: 1, textAlign: "center" } }, "TIPS & GUIDANCE"),
+        sections.map(function(section, i) {
+          return h("div", { key: i, style: { background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: 20 } },
+            h("div", { style: { fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 12 } }, section.title),
+            section.tips.map(function(tip, j) {
+              return h("div", { key: j, style: { display: "flex", gap: 10, padding: "6px 0" } },
+                h("span", { style: { color: "#4EEEB0", fontSize: 12, marginTop: 2, flexShrink: 0 } }, "\u25CF"),
+                h("span", { style: { fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.5 } }, tip)
+              );
+            })
+          );
+        })
+      );
+    }
+
+    function App() {
+      var ref = useReducer(reducer, initialState, function() { return loadState() || initialState; });
+      var state = ref[0], dispatch = ref[1];
+
+      useEffect(function() { saveState(state); }, [state]);
+
+      return h("div", null,
+        h("div", { style: { textAlign: "center", marginBottom: 20 } },
+          h("div", { style: { fontSize: 22, fontWeight: 800, letterSpacing: -0.5 } },
+            h("span", { style: { color: "#4EEEB0" } }, "FAST"),
+            h("span", { style: { color: "rgba(255,255,255,0.8)" } }, "TRACK")
+          ),
+          h("div", { style: { fontSize: 11, color: "rgba(255,255,255,0.3)", letterSpacing: 2 } }, "WATER FASTING COMPANION")
+        ),
+        state.view === "dashboard" ? h(DashboardView, { state: state, dispatch: dispatch }) : null,
+        state.view === "water" ? h(WaterView, { state: state, dispatch: dispatch }) : null,
+        state.view === "weight" ? h(WeightView, { state: state, dispatch: dispatch }) : null,
+        state.view === "plans" ? h(PlansView, { state: state, dispatch: dispatch }) : null,
+        state.view === "tips" ? h(TipsView) : null,
+        h(NavBar, { view: state.view, dispatch: dispatch })
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+  </script>
+</body>
+</html>
